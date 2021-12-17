@@ -142,18 +142,18 @@ def calcul(mesh_in, clim_in, init_in, time_in, output_type='dict', logfile = Non
     clim = copy.deepcopy( clim_in )
     init = copy.deepcopy( init_in )
     time = copy.deepcopy( time_in )
-    
+
     # U is the array of interest : a concatenation of P and T at each time step
     U = initialisation(init, mesh)
     U = np.asarray([U])
-    
+
     # Initialisation of the simulation diary, if asked by the user
     if logfile is None:
         logobj = None
     else:
         logobj = open(logfile,'w')
         logobj.write("Conv. P \t Conv. T \n")
-    
+
     # Beginning of the time loop
     while time.t <= time.end:
         
@@ -167,7 +167,7 @@ def calcul(mesh_in, clim_in, init_in, time_in, output_type='dict', logfile = Non
         U = np.concatenate( (U, [U[-1,:]]) )
         U_old = copy.deepcopy( U[-1,:] )
         S_old   = mesh.system_conserv(U_old[:mesh.nbr_nodes],U_old[mesh.nbr_nodes:])
-        
+
         # Dirichlet boundary conditions are manually updated
         for i in range(2):
             # Each side of the domain is treated separately
@@ -178,51 +178,49 @@ def calcul(mesh_in, clim_in, init_in, time_in, output_type='dict', logfile = Non
                 T = clim[i].T(time.t)
                 U[-1, ind_P] = P
                 U[-1, ind_T] = T
-        
+
         # Iteration loop of the current time step
-        while (conv_t > 1e-4) or (conv_p > 1e-4) or (nbr_iter <= 1) :
+        while (conv_t > 1e-4) or (conv_p > 1e-4) or (nbr_iter <= 1):
             
             # Number of iterations since the time step began
             nbr_iter += 1
-            
+
             # Check that the maximum number of iterations has not been exceeded
-            if time.method == 'variable':
-                if nbr_iter > time.iter_max:
-                    time.try_again(2, logobj)
-                    U[-1,:]  = U_old
-                    nbr_iter = 0
-                    continue
-            
+            if time.method == 'variable' and nbr_iter > time.iter_max:
+                time.try_again(2, logobj)
+                U[-1,:]  = U_old
+                nbr_iter = 0
+                continue
+
             # Key step : calculation of the new P and T profiles
             P = U[-1, :mesh.nbr_nodes ]
             T = U[-1,  mesh.nbr_nodes:]
             [P_new, T_new] = iteration(P, T, S_old, time, mesh, clim)
-            
+
             # Check if the new values of P and T are within acceptable bounds
             if solution_not_acceptable(P = P_new, T = T_new):
                 # Divergence : divide time step size by 10 and try again
                 time.try_again(10, logobj)
                 if time.stop:
                     break
-                else:
-                    U[-1,:]  = U_old
-                    nbr_iter = 0
-                    continue
+                U[-1,:]  = U_old
+                nbr_iter = 0
+                continue
             else:
                 conv_p  = np.sum( (P_new-P)**2 ) / np.sum( P**2 )
                 conv_t  = np.sum( (T_new-T)**2 ) / np.sum( T**2 )
                 U[-1,:] = np.concatenate((P_new,T_new))
                 if logobj is not None:
                     logobj.write( "%.6e \t %.6e \n" % (conv_p, conv_t) )
-        
+
         # Time step is over: prepare the next one
         if time.stop:
             break
-        
+
         time.next_step(nbr_iter)
         if time.t > time.end and time.vec[-1] < time.end:
             time.t = time.end
-    
+
     # If the simulation has been interrupted for some reason, return nan
     if time.stop:
         if logobj is not None:
@@ -230,14 +228,14 @@ def calcul(mesh_in, clim_in, init_in, time_in, output_type='dict', logfile = Non
             logobj.close()
         print("Convergence not reached: simulation stopped")
         # return np.nan
-    
+
     # Otherwise, the simulation has been completed without interruption
     if logobj is not None:
         logobj.close()
-    
+
     # The results are now saved
     if output_type == 'file':
-        
+
         np.savez('hamopy_output',
                  x  = mesh.x,
                  t  = time.vec,
@@ -247,10 +245,10 @@ def calcul(mesh_in, clim_in, init_in, time_in, output_type='dict', logfile = Non
                  HR = ham.HR(U[:,:mesh.nbr_nodes], U[:,mesh.nbr_nodes:]),
                  PV = ham.p_v(U[:,:mesh.nbr_nodes], U[:,mesh.nbr_nodes:])
                  )
-                 
+
     elif output_type == 'dict':
 
-        results = {'x'  : mesh.x,
+        return {'x'  : mesh.x,
                    't'  : np.array(time.vec),
                    'U'  : U,
                    'T'  : U[:,mesh.nbr_nodes:],
@@ -258,8 +256,6 @@ def calcul(mesh_in, clim_in, init_in, time_in, output_type='dict', logfile = Non
                    'HR' : ham.HR(U[:,:mesh.nbr_nodes], U[:,mesh.nbr_nodes:]),
                    'PV' : ham.p_v(U[:,:mesh.nbr_nodes], U[:,mesh.nbr_nodes:])
                     }
-                    
-        return results
 
 
 def iteration_thermo(T, T_old, time, mesh, clim):
@@ -273,14 +269,12 @@ def iteration_thermo(T, T_old, time, mesh, clim):
     # Construction of the matrices for the linearised equations system
     [C, K]    = mesh.system_matrices_thermo(T)               # matrices
     [F, dFdU] = mesh.system_boundary_thermo(T, clim, time.t) # boundary
-    
+
     # Newton Raphson
     A = C + time.delta*K - time.delta*dFdU
     b = time.delta*F - time.delta*K*T - C*(T-T_old)
     DELTA_T = spsolve(A, b)
-    T_new   = T + DELTA_T
-
-    return T_new
+    return T + DELTA_T
 
 def iteration_hygro(P, P_old, time, mesh, clim):
     """
@@ -293,14 +287,12 @@ def iteration_hygro(P, P_old, time, mesh, clim):
     # Construction of the matrices for the linearised equations system
     [C, K]    = mesh.system_matrices_hygro(P)               # matrices
     [F, dFdU] = mesh.system_boundary_hygro(P, clim, time.t) # boundary
-    
+
     # Newton Raphson
     A = C + time.delta*K - time.delta*dFdU
     b = time.delta*F - time.delta*K*P - C*(P-P_old)
     DELTA_P = spsolve(A, b)
-    P_new   = P + DELTA_P
-
-    return P_new
+    return P + DELTA_P
 
 def calcul_thermo(mesh_in, clim_in, init_in, time_in, output_type='dict', logfile = None):
     """
@@ -328,18 +320,18 @@ def calcul_thermo(mesh_in, clim_in, init_in, time_in, output_type='dict', logfil
     clim = copy.deepcopy( clim_in )
     init = copy.deepcopy( init_in )
     time = copy.deepcopy( time_in )
-    
+
     # Initialisation de la matrice des solutions
     T = initialisation(init, mesh, thermo = True)
     T = np.asarray([T])
-    
+
     # Initialisation of the simulation diary, if asked by the user
     if logfile is None:
         logobj = None
     else:
         logobj = open(logfile,'w')
         logobj.write("Conv. T \n")
-    
+
     # Beginning of the time loop
     while time.t <= time.end:
         
@@ -351,56 +343,54 @@ def calcul_thermo(mesh_in, clim_in, init_in, time_in, output_type='dict', logfil
         conv_t   = 1
         T = np.concatenate( (T, [T[-1]]) )
         T_old = copy.deepcopy( T[-1] )
-        
+
         # Dirichlet boundary conditions are manually updated
         for i in range(2):
             # Each side of the domain is treated separately
             if clim[i].type == 'Dirichlet':
                 ind =  i * (mesh.nbr_nodes - 1)
                 T[-1, ind] = clim[i].T(time.t)
-        
+
         # Iteration loop of the current time step
-        while (conv_t > 1e-4) or (nbr_iter <= 1) :
+        while (conv_t > 1e-4) or (nbr_iter <= 1):
             
             # Number of iterations since the time step began
             nbr_iter += 1
-            
+
             # Check that the maximum number of iterations has not been exceeded
-            if time.method == 'variable':
-                if nbr_iter > time.iter_max:
-                    time.try_again(2, logobj)
-                    T[-1]  = T_old
-                    nbr_iter = 0
-                    continue
-            
+            if time.method == 'variable' and nbr_iter > time.iter_max:
+                time.try_again(2, logobj)
+                T[-1]  = T_old
+                nbr_iter = 0
+                continue
+
             # Key step : calculation of the new T profile
             T_new = iteration_thermo(T[-1], T_old, time, mesh, clim)
-            
+
             # Check if the new values of T are within acceptable bounds
             if solution_not_acceptable(P = -5e8, T = T_new):
                 # Divergence : divide time step size by 10 and try again
                 time.try_again(10, logobj)
                 if time.stop:
                     break
-                else:
-                    T[-1]  = T_old
-                    nbr_iter = 0
-                    continue
-                
+                T[-1]  = T_old
+                nbr_iter = 0
+                continue
+
             else:
                 conv_t = np.sum( (T_new-T[-1])**2 ) / np.sum( T[-1]**2 )
                 T[-1]  = T_new
                 if logobj is not None:
                     logobj.write( "%.6e \n" % conv_t )
-        
+
         # Time step is over: prepare the next one
         if time.stop:
             break
-        
+
         time.next_step(nbr_iter)
         if time.t > time.end and time.vec[-1] < time.end:
             time.t = time.end
-    
+
     # If the simulation has been interrupted for some reason, return nan
     if time.stop:
         if logobj is not None:
@@ -408,26 +398,24 @@ def calcul_thermo(mesh_in, clim_in, init_in, time_in, output_type='dict', logfil
             logobj.close()
         print("Convergence not reached: simulation stopped")
         return np.nan
-        
+
     # Otherwise, the simulation has been completed without interruption
     if logobj is not None:
         logobj.close()
-    
+
     # The results are now saved
     if output_type == 'file':
-        
+
         np.savez('hamopy_output',
                  x  = mesh.x,
                  t  = time.vec,
                  T  = T )
-                 
+
     elif output_type == 'dict':
 
-        results = {'x'  : mesh.x,
+        return {'x'  : mesh.x,
                    't'  : np.array(time.vec),
                    'T'  : T }
-                    
-        return results
 
 def calcul_hygro(mesh_in, clim_in, init_in, time_in, output_type='dict', logfile = None):
     """
@@ -455,18 +443,18 @@ def calcul_hygro(mesh_in, clim_in, init_in, time_in, output_type='dict', logfile
     clim = copy.deepcopy( clim_in )
     init = copy.deepcopy( init_in )
     time = copy.deepcopy( time_in )
-    
+
     # Initialisation de la matrice des solutions
     P = initialisation(init, mesh, hygro = True)
     P = np.asarray([P])
-    
+
     # Initialisation of the simulation diary, if asked by the user
     if logfile is None:
         logobj = None
     else:
         logobj = open(logfile,'w')
         logobj.write("Conv. P \n")
-    
+
     # Beginning of the time loop
     while time.t <= time.end:
         
@@ -478,56 +466,54 @@ def calcul_hygro(mesh_in, clim_in, init_in, time_in, output_type='dict', logfile
         conv_p   = 1
         P = np.concatenate( (P, [P[-1]]) )
         P_old = copy.deepcopy( P[-1] )
-        
+
         # Dirichlet boundary conditions are manually updated
         for i in range(2):
             # Each side of the domain is treated separately
             if clim[i].type == 'Dirichlet':
                 ind =  i * (mesh.nbr_nodes - 1)
                 P[-1, ind] = ham.p_c(clim[i].HR(time.t), clim[i].T(time.t))
-        
+
         # Iteration loop of the current time step
-        while (conv_p > 1e-4) or (nbr_iter <= 1) :
+        while (conv_p > 1e-4) or (nbr_iter <= 1):
             
             # Number of iterations since the time step began
             nbr_iter += 1
-            
+
             # Check that the maximum number of iterations has not been exceeded
-            if time.method == 'variable':
-                if nbr_iter > time.iter_max:
-                    time.try_again(2, logobj)
-                    P[-1]  = P_old
-                    nbr_iter = 0
-                    continue
-            
+            if time.method == 'variable' and nbr_iter > time.iter_max:
+                time.try_again(2, logobj)
+                P[-1]  = P_old
+                nbr_iter = 0
+                continue
+
             # Key step : calculation of the new T profile
             P_new = iteration_hygro(P[-1], P_old, time, mesh, clim)
-            
+
             # Check if the new values of T are within acceptable bounds
             if solution_not_acceptable(P = P_new, T = 293.15):
                 # Divergence : divide time step size by 10 and try again
                 time.try_again(10, logobj)
                 if time.stop:
                     break
-                else:
-                    P[-1]  = P_old
-                    nbr_iter = 0
-                    continue
-                
+                P[-1]  = P_old
+                nbr_iter = 0
+                continue
+
             else:
                 conv_p = np.sum( (P_new-P[-1])**2 ) / np.sum( P[-1]**2 )
                 P[-1]  = P_new
                 if logobj is not None:
                     logobj.write( "%.6e \n" % conv_p )
-        
+
         # Time step is over: prepare the next one
         if time.stop:
             break
-        
+
         time.next_step(nbr_iter)
         if time.t > time.end and time.vec[-1] < time.end:
             time.t = time.end
-    
+
     # If the simulation has been interrupted for some reason, return nan
     if time.stop:
         if logobj is not None:
@@ -535,26 +521,24 @@ def calcul_hygro(mesh_in, clim_in, init_in, time_in, output_type='dict', logfile
             logobj.close()
         print("Convergence not reached: simulation stopped")
         return np.nan
-        
+
     # Otherwise, the simulation has been completed without interruption
     if logobj is not None:
         logobj.close()
-    
+
     # The results are now saved
     T = ( clim[0].T(time.end) + clim[1].T(time.end) )/2
     if output_type == 'file':
-        
+
         np.savez('hamopy_output',
                  x  = mesh.x,
                  t  = time.vec,
                  PC  = P )
-                 
+
     elif output_type == 'dict':
 
-        results = {'x'  : mesh.x,
+        return {'x'  : mesh.x,
                    't'  : np.array(time.vec),
                    'PC'  : P,
                    'HR' : ham.HR(P, T),
                    'PV' : ham.p_v(P, T)}
-                    
-        return results

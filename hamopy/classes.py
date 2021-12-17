@@ -500,11 +500,11 @@ class Mesh(object):
             bar = sizes[i] / nbr_elements[i] * np.ones(nbr_elements[i])
             elem_material = np.concatenate((elem_material, foo), axis=0)
             elem_size     = np.concatenate((elem_size,     bar), axis=0)
-        
+
         # Material index and size of each element of the mesh
         self.elem_material = [int(i) for i in elem_material]
         self.elem_size     = elem_size
-        
+
         # Construction of the list of finite elements
         elements = []
         x_nodes  = np.zeros(3*sum(nbr_elements) + 1)
@@ -515,11 +515,11 @@ class Mesh(object):
             new_element = FiniteElement(x_min, x_max, indices, self.nbr_nodes)
             elements.append(new_element)
             x_nodes[indices] = new_element.x
-        
+
         # The list of all elements and nodes is saved
         self.e = elements
         self.x = x_nodes
-        
+
         # All information regarding the Gauss-Legendre integration scheme
         self.GL_X   = np.array( [self.e[_].GL_X   for _ in range(sum(self.nbr_elem))] )
         self.GL_W   = np.array( [self.e[_].GL_W   for _ in range(sum(self.nbr_elem))] )
@@ -528,24 +528,28 @@ class Mesh(object):
         self.GL_NtN = np.array( [self.e[_].GL_NtN for _ in range(sum(self.nbr_elem))] )
         self.GL_BtB = np.array( [self.e[_].GL_BtB for _ in range(sum(self.nbr_elem))] )
         self.GL_BtN = np.array( [self.e[_].GL_BtN for _ in range(sum(self.nbr_elem))] )
-        
+
         # These arrays are later used for the assembling of elementary matrices
         self.indices_row = np.concatenate(([self.e[i].indices_row for i in range(sum(self.nbr_elem))]))
         self.indices_col = np.concatenate(([self.e[i].indices_col for i in range(sum(self.nbr_elem))]))
-        
+
         """
         # I don't remember what this is for - probably obsolete
         foo = 3*np.array( range(np.sum(self.nbr_elem)) )
         foo = foo[:, np.newaxis]
         self.indices_s = foo + np.array([0, 1, 2, 3])
         """
-        
+
         # Equivalent air permeability of the entire wall
         if np.any( [materials[_].k_air == 0 for _ in range(len(materials))] ):
             self.C_air = 0
         else:
             D = sum(self.sizes)
-            K_eq = D / sum([self.sizes[_] / self.materials[_].k_air for _ in range(len(self.materials))])
+            K_eq = D / sum(
+                self.sizes[_] / self.materials[_].k_air
+                for _ in range(len(self.materials))
+            )
+
             self.C_air = K_eq / D * ham.rho_air / ham.mu_air
         # Matrice int(BtN) sur l'ensemble du systeme
         bar = np.sum( self.GL_W.reshape((sum(self.nbr_elem),1,1,4)) * self.GL_BtN, axis=-1)
@@ -948,33 +952,32 @@ class Boundary:
         ok = 'T' in kwargs.keys() and 'HR' in kwargs.keys() or 'p_v' in kwargs.keys()
         if not ok:
             raise Exception('T and HR or p_v must be given in the boundary definition')
-        
+
         if 'file' in kwargs.keys():
 
-            if 'time' in kwargs.keys():
-                if 'delimiter' not in kwargs.keys():
-                    data0 = pd.read_csv(kwargs['file'], delimiter='\t')
-                    del kwargs['file']
-                else:
-                    data0 = pd.read_csv(kwargs['file'], delimiter=kwargs['delimiter'])
-                    del kwargs['file'], kwargs['delimiter']
-            else:
+            if 'time' not in kwargs.keys():
                 raise Exception('Time argument missing in the boundary definition')
-            
+
+            if 'delimiter' not in kwargs.keys():
+                data0 = pd.read_csv(kwargs['file'], delimiter='\t')
+                del kwargs['file']
+            else:
+                data0 = pd.read_csv(kwargs['file'], delimiter=kwargs['delimiter'])
+                del kwargs['file'], kwargs['delimiter']
+            taille_du_fichier = np.shape( data0[kwargs['time']] )
             # If any value is variable, all other values are saved as constant
             # arrays
-            kwargs_new = {}
-            taille_du_fichier = np.shape( data0[kwargs['time']] )
-            for key in kwargs:
-                if type(kwargs[key]) == str:
-                    kwargs_new[key] = np.array( data0[kwargs[key]] )
-                else:
-                    kwargs_new[key] = kwargs[key] * np.ones(taille_du_fichier)
+            kwargs_new = {
+                key: np.array(data0[kwargs[key]])
+                if type(kwargs[key]) == str
+                else kwargs[key] * np.ones(taille_du_fichier)
+                for key in kwargs
+            }
 
         else:
             # All values are constant or given in the initial dictionary
             kwargs_new = kwargs
-        
+
 
         # If T has been given in C, it is switched to K      
         if kwargs_new['T'].mean() < 200:
@@ -982,81 +985,77 @@ class Boundary:
             if 'T_eq' in kwargs_new.keys():
                 kwargs_new['T_eq'] += 273.15
 
-        
+
         # If no equivalent temperature is given, it is set to that of air
         if 'T_eq' not in kwargs_new.keys():
             kwargs_new['T_eq'] = kwargs_new['T']
-            
+
         # If no rain is given, the value of g_l is 0
         if 'g_l' not in kwargs_new.keys():
             kwargs_new['g_l'] = 0.
-        
+
         # If HR is not given, p_v is expected
         if 'HR' not in kwargs_new.keys():
             kwargs_new['HR'] = kwargs_new['p_v'] / ham.p_sat(kwargs_new['T'])
-        
+
         # If p_v is not given, HR is expected
         if 'p_v' not in kwargs_new.keys():
             kwargs_new['p_v'] = kwargs_new['HR'] * ham.p_sat(kwargs_new['T'])
-        
+
         # If h_t is not given, default value is 5 W/m2K
         if 'h_t' not in kwargs_new.keys():
             kwargs_new['h_t'] = 5.
-        
+
         # If h_m is not given, default value is 7.45e-9 * h_t
         if 'h_m' not in kwargs_new.keys():
             kwargs_new['h_m'] = 7.45e-9 * kwargs_new['h_t']
-        
+
         # If no air pressure is given, the value of P_air is 0
         if 'P_air' not in kwargs_new.keys():
             kwargs_new['P_air'] = 0.
-         
+
         if method == 'Dirichlet':
             kwargs_new['h_t'] = 1000.
             kwargs_new['h_m'] = 1e-4
-        
+
         self.type = method
         self.data = kwargs_new
-        self.constant = not 'time' in self.data.keys()
+        self.constant = 'time' not in self.data.keys()
         
     def has_constant(self, var):
-        return isinstance(self.data[var], float) or isinstance(self.data[var], int)
+        return isinstance(self.data[var], (float, int))
 
     def T(self, t):
         """ Outside temperature [K] """
         if self.has_constant('T'):
             return self.data['T']
-        else:
-            out = self.data['T'][0]
-            f = interp1d(self.data['time'], self.data['T'], bounds_error=False, fill_value=out)
-            return f(t)
+        out = self.data['T'][0]
+        f = interp1d(self.data['time'], self.data['T'], bounds_error=False, fill_value=out)
+        return f(t)
     
     def HR(self, t):
         """ Outside relative humidity [-] """
         if self.has_constant('HR'):
             return self.data['HR']
-        else:
-            out = self.data['HR'][0]
-            f = interp1d(self.data['time'], self.data['HR'], bounds_error=False, fill_value=out)
-            return f(t)
+        out = self.data['HR'][0]
+        f = interp1d(self.data['time'], self.data['HR'], bounds_error=False, fill_value=out)
+        return f(t)
     
     def T_eq(self, t):
         """ Outside equivalent temperature [K] """
         if self.has_constant('T_eq'):
             return self.data['T_eq']
-        else:
-            out = self.data['T_eq'][0]
-            f = interp1d(self.data['time'], self.data['T_eq'], bounds_error=False, fill_value=out)
-            return f(t)
+        out = self.data['T_eq'][0]
+        f = interp1d(self.data['time'], self.data['T_eq'], bounds_error=False, fill_value=out)
+        return f(t)
     
     def p_v(self, t):
         """ Outside vapor pressure [Pa] """
         if self.has_constant('p_v'):
             return self.data['p_v']
-        else:
-            out = self.data['p_v'][0]
-            f = interp1d(self.data['time'], self.data['p_v'], bounds_error=False, fill_value=out)
-            return f(t)
+        out = self.data['p_v'][0]
+        f = interp1d(self.data['time'], self.data['p_v'], bounds_error=False, fill_value=out)
+        return f(t)
     
     def p_c(self, t):
         return ham.p_c(self.HR(t), self.T(t))
@@ -1065,37 +1064,33 @@ class Boundary:
         """ Heat transfer coefficient [W/(m2K)]"""
         if self.has_constant('h_t'):
             return self.data['h_t']
-        else:
-            out = self.data['h_t'][0]
-            f = interp1d(self.data['time'], self.data['h_t'], bounds_error=False, fill_value=out)
-            return f(t)
+        out = self.data['h_t'][0]
+        f = interp1d(self.data['time'], self.data['h_t'], bounds_error=False, fill_value=out)
+        return f(t)
     
     def h_m(self, t):
         """ Moisture transfer coefficient [s/m] """
         if self.has_constant('h_m'):
             return self.data['h_m']
-        else:
-            out = self.data['h_m'][0]
-            f = interp1d(self.data['time'], self.data['h_m'], bounds_error=False, fill_value=out)
-            return f(t)
+        out = self.data['h_m'][0]
+        f = interp1d(self.data['time'], self.data['h_m'], bounds_error=False, fill_value=out)
+        return f(t)
     
     def g_l(self, t):
         """ Rain [kg/(m2s)] """
         if self.has_constant('g_l'):
             return self.data['g_l']
-        else:
-            out = self.data['g_l'][0]
-            f = interp1d(self.data['time'], self.data['g_l'], bounds_error=False, fill_value=out)
-            return f(t)
+        out = self.data['g_l'][0]
+        f = interp1d(self.data['time'], self.data['g_l'], bounds_error=False, fill_value=out)
+        return f(t)
     
     def P_air(self, t):
         """ Air pressure [Pa] """
         if self.has_constant('P_air'):
             return self.data['P_air']
-        else:
-            out = self.data['P_air'][0]
-            f = interp1d(self.data['time'], self.data['P_air'], bounds_error=False, fill_value=out)
-            return f(t)
+        out = self.data['P_air'][0]
+        f = interp1d(self.data['time'], self.data['P_air'], bounds_error=False, fill_value=out)
+        return f(t)
 
 class Time:
     """
@@ -1126,28 +1121,13 @@ class Time:
         self.delta  = kwargs['delta_t']
         self.end    = kwargs['t_max']
         self.stop   = False
-        
+
         if method == 'variable':
             
-            if 'iter_max' in kwargs.keys():
-                self.iter_max = kwargs['iter_max']
-            else:
-                self.iter_max = 12
-                
-            if 'delta_min' in kwargs.keys():
-                self.delta_min = kwargs['delta_min']
-            else:
-                self.delta_min = 1e-3
-            
-            if 'delta_max' in kwargs.keys():
-                self.delta_max = kwargs['delta_max']
-            else:
-                self.delta_max = 900
-            
-        elif method == 'constant':
-            pass
-        
-        else:
+            self.iter_max = kwargs['iter_max'] if 'iter_max' in kwargs.keys() else 12
+            self.delta_min = kwargs['delta_min'] if 'delta_min' in kwargs.keys() else 1e-3
+            self.delta_max = kwargs['delta_max'] if 'delta_max' in kwargs.keys() else 900
+        elif method != 'constant':
             raise Exception('Time method must be either constant or variable')
         
         

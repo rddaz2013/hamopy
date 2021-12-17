@@ -105,49 +105,49 @@ def surface_heat_flow(result, mesh, clim, side, t = None, total = False):
     :q_total: total heat flow including convection, evaporation and condensation
     """
     
-    if side == 0 or side == 'left':
+    if side in [0, 'left']:
         x  = result['x'][0]
         x2 = result['x'][1]
         i  = 0
-    elif side == 1 or side == 'right':
+    elif side in [1, 'right']:
         x  = result['x'][-1]
         x2 = result['x'][-2]
         i  = 1
-    
+
     # Select the material on the chosen side of the wall
     m = mesh.materials[-i]
-    
+
     # Temperature and pressure at the surface node and the next material node
     T_surf,  T_surf2  = [evolution(result, 'T', _, t)  for _ in [x, x2]]
     PC_surf, PC_surf2 = [evolution(result, 'PC', _, t) for _ in [x, x2]]
     PV_surf, PV_surf2 = [evolution(result, 'PV', _, t) for _ in [x, x2]]
-    
+
     # Heat flow caused by sole air flow
     g_air = mesh.C_air * (clim[0].P_air(t) - clim[1].P_air(t))
     q_air = g_air * ham.cp_air * ((T_surf+T_surf2)/2 - 273.15)
-    
+
     # Heat flow caused by sole conduction
     lambda_ = (m.conduc(PC_surf, T_surf)+m.conduc(PC_surf2, T_surf2)) /2
     q_cond  = lambda_ * (T_surf-T_surf2) / np.abs(x-x2)
-    
+
     # In case of pure thermal calculation, we stop here
     if 'PV' not in result.keys():
-        
+
         q_conv = 0.
-        
+
     else:
-    
+
         # Otherwise, let's add moisture-induced heat flow
         # Average conductivities between two nodes closest to the surface
         lambda_ = (m.conduc(PC_surf, T_surf)+m.conduc(PC_surf2, T_surf2)) /2
         delta_  = (m.delta_p(PC_surf) + m.delta_p(PC_surf2)) /2
         k_l     = (m.k_l(PC_surf) + m.k_l(PC_surf2)) /2
-        
+
         # Heat flow caused by evaporation or condensation
         q_conv = ham.l_lv * delta_ * (PV_surf-PV_surf2) / np.abs(x-x2)
         q_conv += ham.cp_liq * ((T_surf+T_surf2)/2 - 273.15) \
             * k_l * (PC_surf-PC_surf2) / np.abs(x-x2)
-    
+
     # Output : either conduction only, or all heat transfer with coupling
     if not total:
         return q_cond
@@ -238,37 +238,37 @@ def surface_heat_flow_out(result, mesh, clim, side, t = None):
     :q_total: total heat flow including convection, evaporation and condensation
     """
     
-    if side == 0 or side == 'left':
+    if side in [0, 'left']:
         x  = result['x'][0]
         i  = 0
-    elif side == 1 or side == 'right':
+    elif side in [1, 'right']:
         x  = result['x'][-1]
         i  = 1
-    
+
     T_surf  = evolution(result, 'T', x, t)
-    
+
     # Convective heat flow caused by air transfer
     g_air  = mesh.C_air * (clim[0].P_air(t) - clim[1].P_air(t))
     q_wind = (-1)**i * ham.cp_air * (clim[i].T(t)-T_surf) * g_air
-    
+
     # Heat flow caused by sole thermal convection
     T_surf  = evolution(result, 'T', x, t)
     q_cond  = clim[i].h_t(t) * ( clim[i].T_eq(t) - T_surf )
-    
+
     # In case of pure thermal calculation, we stop here
     if 'PV' not in result.keys():
-        
+
         q_evap = 0
         q_rain = 0
-        
+
     else:
-        
+
         # Otherwise, let's add moisture-related heat flow
         PV_surf = evolution(result, 'PV', x, t)
         q_rain = clim[i].g_l(t) * ham.cp_liq * ( clim[i].T(t) - 273.15 )
         q_evap = clim[i].h_m(t) * ham.l_lv * ( clim[i].p_v(t) - PV_surf )
-        
+
         # Let's modify the wind-related term as well
         q_wind += ham.l_lv * g_air * (-1)**i * (clim[i].p_v(t)/clim[i].T(t) - PV_surf/T_surf ) / (ham.Rv * ham.rho_air)
-          
+
     return (q_cond, q_cond + q_rain + q_evap + q_wind)
